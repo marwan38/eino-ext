@@ -91,6 +91,12 @@ func main() {
 			Display: anthropic.ThinkingConfigAdaptiveDisplaySummarized,
 		},
 	}))
+	// Adaptive thinking (Claude Opus 4.7 and newer):
+	// claude.WithThinking(&claude.Thinking{
+	//     Enable: true,
+	//     Mode:   claude.ThinkingModeAdaptive,
+	//     Effort: "medium", // "low" | "medium" | "high" | "max" | "xhigh"
+	// })
 	if err != nil {
 		log.Printf("Generate error: %v", err)
 		return
