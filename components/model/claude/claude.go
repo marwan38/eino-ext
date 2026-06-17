@@ -710,7 +710,7 @@ func (cm *ChatModel) genParamsAndOptions(input []*schema.Message, opts ...model.
 			return msgParams, reqOpts, err
 		}
 		if effort := normalizeOutputEffort(specOptions.Thinking.Effort); effort != "" {
-			msgParams.OutputConfig = anthropic.OutputConfigParam{Effort: effort}
+			msgParams.OutputConfig.Effort = effort
 		}
 	}
 	if specOptions.ThinkingConfig != nil {
@@ -723,10 +723,8 @@ func (cm *ChatModel) genParamsAndOptions(input []*schema.Message, opts ...model.
 			err = fmt.Errorf("failed to marshal response format schema: %w", mErr)
 			return msgParams, reqOpts, err
 		}
-		msgParams.OutputConfig = anthropic.OutputConfigParam{
-			Format: anthropic.JSONOutputFormatParam{
-				Schema: schemaMap,
-			},
+		msgParams.OutputConfig.Format = anthropic.JSONOutputFormatParam{
+			Schema: schemaMap,
 		}
 	}
 
