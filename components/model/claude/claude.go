@@ -669,7 +669,7 @@ func (cm *ChatModel) genMessageNewParams(input []*schema.Message, opts ...model.
 			return anthropic.MessageNewParams{}, fmt.Errorf("unsupported thinking mode: %s", specOptions.Thinking.Mode)
 		}
 		if effort := normalizeOutputEffort(specOptions.Thinking.Effort); effort != "" {
-			params.OutputConfig = anthropic.OutputConfigParam{Effort: effort}
+			params.OutputConfig.Effort = effort
 		}
 	}
 
@@ -678,10 +678,8 @@ func (cm *ChatModel) genMessageNewParams(input []*schema.Message, opts ...model.
 		if mErr != nil {
 			return anthropic.MessageNewParams{}, fmt.Errorf("failed to marshal response format schema: %w", mErr)
 		}
-		params.OutputConfig = anthropic.OutputConfigParam{
-			Format: anthropic.JSONOutputFormatParam{
-				Schema: schemaMap,
-			},
+		params.OutputConfig.Format = anthropic.JSONOutputFormatParam{
+			Schema: schemaMap,
 		}
 	}
 
