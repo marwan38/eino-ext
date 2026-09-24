@@ -269,7 +269,7 @@ type Config struct {
 	// Optional. Example: []string{"\n\nHuman:", "\n\nAssistant:"}
 	StopSequences []string
 
-	// Deprecated: Use ThinkingConfig instead.
+	// Thinking configures thinking mode and output effort. ThinkingConfig, when set, overrides the thinking shape.
 	Thinking *Thinking
 
 	// ThinkingConfig configures Claude thinking using Anthropic SDK's native union.
@@ -330,7 +330,6 @@ const (
 	ThinkingModeAdaptive ThinkingMode = "adaptive"
 )
 
-// Deprecated: Use anthropic.ThinkingConfigParamUnion with Config.ThinkingConfig or WithThinkingConfig instead.
 type Thinking struct {
 	Enable bool `json:"enable"`
 

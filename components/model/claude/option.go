@@ -47,7 +47,7 @@ func WithTopK(k int32) model.Option {
 	})
 }
 
-// Deprecated: Use WithThinkingConfig instead.
+// WithThinking sets thinking mode and output effort for this request.
 func WithThinking(t *Thinking) model.Option {
 	return model.WrapImplSpecificOptFn(func(o *options) {
 		o.Thinking = t
