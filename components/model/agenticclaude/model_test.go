@@ -18,6 +18,7 @@ package agenticclaude
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -331,17 +332,6 @@ func TestServerToolSelection(t *testing.T) {
 		}
 	})
 
-	t.Run("collect beta headers only for web fetch", func(t *testing.T) {
-		got := collectServerToolBetaHeaders([]*ServerToolConfig{
-			{WebSearch20260209: &anthropic.WebSearchTool20260209Param{}},
-			{WebFetch20260309: &anthropic.WebFetchTool20260309Param{}},
-			{ToolSearchToolBm25_20251119: &anthropic.ToolSearchToolBm25_20251119Param{}},
-		})
-		if len(got) != 1 || got[0] != betaHeaderWebFetch20260309 {
-			t.Fatalf("collectServerToolBetaHeaders() = %#v", got)
-		}
-	})
-
 	t.Run("split header values trims blanks", func(t *testing.T) {
 		got := splitHeaderValues(" foo , , bar,baz ")
 		if len(got) != 3 {
@@ -413,8 +403,73 @@ func TestGenRequestAndOptions(t *testing.T) {
 	if len(req.Messages) != 1 || len(req.Tools) != 2 {
 		t.Fatalf("messages/tools = (%d, %d)", len(req.Messages), len(req.Tools))
 	}
-	if len(reqOpts) != 4 {
-		t.Fatalf("len(reqOpts) = %d, want 4", len(reqOpts))
+	if len(reqOpts) != 3 {
+		t.Fatalf("len(reqOpts) = %d, want 3", len(reqOpts))
+	}
+}
+
+func TestWebFetchRequestHeaders(t *testing.T) {
+	webFetch := WithServerTools([]*ServerToolConfig{
+		{WebFetch20260309: &anthropic.WebFetchTool20260309Param{}},
+	})
+
+	cases := []struct {
+		name          string
+		configHeaders map[string]string
+		opts          []model.Option
+	}{
+		{
+			name:          "config custom headers",
+			configHeaders: map[string]string{headerAnthropicBeta: "custom-beta", "x-trace-id": "trace-1"},
+			opts:          []model.Option{webFetch},
+		},
+		{
+			name: "call custom headers",
+			opts: []model.Option{
+				webFetch,
+				WithCustomHeaders(map[string]string{headerAnthropicBeta: "custom-beta", "x-trace-id": "trace-1"}),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearAnthropicAuthEnv(t)
+
+			var gotHeader http.Header
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotHeader = r.Header.Clone()
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+			}))
+			defer srv.Close()
+
+			m, err := New(context.Background(), &Config{
+				BaseURL:       srv.URL,
+				APIKey:        "api-key",
+				Model:         "claude-sonnet-4",
+				MaxTokens:     1024,
+				CustomHeaders: tc.configHeaders,
+			})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			_, err = m.Generate(context.Background(), []*schema.AgenticMessage{
+				schema.UserAgenticMessage("hello"),
+			}, tc.opts...)
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+
+			betas := gotHeader.Values(headerAnthropicBeta)
+			if len(betas) != 1 || betas[0] != "custom-beta" {
+				t.Fatalf("anthropic-beta = %#v, want only custom-beta", betas)
+			}
+			if got := gotHeader.Get("x-trace-id"); got != "trace-1" {
+				t.Fatalf("x-trace-id = %q, want trace-1", got)
+			}
+		})
 	}
 }
 
@@ -934,4 +989,71 @@ func TestManualCacheControlInConvertors(t *testing.T) {
 			t.Fatalf("block should not have cache_control, got type=%q", param.Content[0].OfText.CacheControl.Type)
 		}
 	})
+}
+
+func TestExtraFieldsMergeWithConfig(t *testing.T) {
+	clearAnthropicAuthEnv(t)
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body = nil
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+
+	cfgFields := map[string]any{
+		"output_config": map[string]any{"effort": "high"},
+		"shared":        "config",
+	}
+	m, err := New(context.Background(), &Config{
+		BaseURL:     srv.URL,
+		APIKey:      "test-key",
+		Model:       "claude-sonnet-4",
+		MaxTokens:   1024,
+		ExtraFields: cfgFields,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	generate := func(opts ...model.Option) map[string]any {
+		t.Helper()
+		_, err := m.Generate(context.Background(), []*schema.AgenticMessage{
+			schema.UserAgenticMessage("hello"),
+		}, opts...)
+		if err != nil {
+			t.Fatalf("Generate() error = %v", err)
+		}
+		return body
+	}
+
+	got := generate(
+		WithExtraFields(map[string]any{"service_tier": "auto", "shared": "first"}),
+		WithExtraFields(map[string]any{"shared": "call"}),
+	)
+	if outputConfig, _ := got["output_config"].(map[string]any); outputConfig["effort"] != "high" {
+		t.Fatalf("output_config = %#v, want config field kept", got["output_config"])
+	}
+	if got["service_tier"] != "auto" {
+		t.Fatalf("service_tier = %#v, want earlier per-call field kept", got["service_tier"])
+	}
+	if got["shared"] != "call" {
+		t.Fatalf("shared = %#v, want last per-call value", got["shared"])
+	}
+
+	if len(cfgFields) != 2 || cfgFields["shared"] != "config" {
+		t.Fatalf("Config.ExtraFields mutated: %#v", cfgFields)
+	}
+
+	got = generate()
+	if got["shared"] != "config" {
+		t.Fatalf("shared = %#v, want config value on next call", got["shared"])
+	}
+	if _, ok := got["service_tier"]; ok {
+		t.Fatalf("service_tier leaked into next call: %#v", got)
+	}
 }

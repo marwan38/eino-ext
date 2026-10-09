@@ -81,10 +81,7 @@ const (
 	serverToolVersionToolSearchToolRegex20251119 = "tool_search_tool_regex_20251119"
 )
 
-const (
-	headerAnthropicBeta        = "anthropic-beta"
-	betaHeaderWebFetch20260309 = "web-fetch-2026-03-09"
-)
+const headerAnthropicBeta = "anthropic-beta"
 
 const implType = "AgenticClaude"
 

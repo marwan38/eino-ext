@@ -485,7 +485,7 @@ func (m *Model) genParamsAndOptions(input []*schema.AgenticMessage, options *mod
 		msgParams.CacheControl = *m.cacheControl
 	}
 
-	reqOpts = appendCustomHeaders(reqOpts, specOptions.serverTools, specOptions.customHeaders)
+	reqOpts = appendCustomHeaders(reqOpts, specOptions.customHeaders)
 	for k, v := range specOptions.extraFields {
 		reqOpts = append(reqOpts, option.WithJSONSet(k, v))
 	}
@@ -501,7 +501,7 @@ func (m *Model) genParamsAndOptions(input []*schema.AgenticMessage, options *mod
 	return msgParams, reqOpts, nil
 }
 
-func appendCustomHeaders(reqOpts []option.RequestOption, serverTools []*ServerToolConfig, customHeaders map[string]string) []option.RequestOption {
+func appendCustomHeaders(reqOpts []option.RequestOption, customHeaders map[string]string) []option.RequestOption {
 	// non-beta headers
 	for k, v := range customHeaders {
 		if k != headerAnthropicBeta {
@@ -509,29 +509,12 @@ func appendCustomHeaders(reqOpts []option.RequestOption, serverTools []*ServerTo
 		}
 	}
 
-	// beta headers: merge server tool betas and custom betas, custom takes precedence
-	serverToolBetas := collectServerToolBetaHeaders(serverTools)
 	customBetas := splitHeaderValues(customHeaders[headerAnthropicBeta])
-	for _, beta := range serverToolBetas {
-		customBetas[beta] = struct{}{}
-	}
 	for beta := range customBetas {
 		reqOpts = append(reqOpts, option.WithHeaderAdd(headerAnthropicBeta, beta))
 	}
 
 	return reqOpts
-}
-
-func collectServerToolBetaHeaders(serverTools []*ServerToolConfig) []string {
-	selectedTools := selectServerTools(serverTools)
-	betas := make([]string, 0, len(selectedTools))
-	for _, tool := range selectedTools {
-		switch tool {
-		case serverToolVersionWebFetch20260309:
-			betas = append(betas, betaHeaderWebFetch20260309)
-		}
-	}
-	return betas
 }
 
 func splitHeaderValues(header string) map[string]struct{} {

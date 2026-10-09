@@ -17,6 +17,7 @@
 package agenticclaude
 
 import (
+	"maps"
 	"time"
 
 	"github.com/cloudwego/eino/components/model"
@@ -44,7 +45,8 @@ func WithCustomHeaders(headers map[string]string) model.Option {
 }
 
 // WithExtraFields sets extra fields to include in the request body.
-// These fields will be merged into the top-level JSON request body, overriding any existing fields with the same key.
+// These fields are merged with Config.ExtraFields and any earlier WithExtraFields; on a key conflict the later value wins.
+// The merged fields are then set into the top-level JSON request body, overriding any existing fields with the same key.
 //
 // Example:
 //
@@ -63,7 +65,11 @@ func WithCustomHeaders(headers map[string]string) model.Option {
 //	}
 func WithExtraFields(fields map[string]any) model.Option {
 	return model.WrapImplSpecificOptFn(func(o *claudeOptions) {
-		o.extraFields = fields
+		// Copy so Config.ExtraFields, the initial value of o.extraFields, is never mutated.
+		merged := make(map[string]any, len(o.extraFields)+len(fields))
+		maps.Copy(merged, o.extraFields)
+		maps.Copy(merged, fields)
+		o.extraFields = merged
 	})
 }
 
