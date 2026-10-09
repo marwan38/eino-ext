@@ -88,4 +88,12 @@ const (
 
 const implType = "AgenticClaude"
 
-const keyOfCacheCreationInputTokens = "_eino_claude_cache_creation_input_tokens"
+const (
+	keyOfCacheCreationInputTokens            = "_eino_claude_cache_creation_input_tokens"
+	keyOfCacheCreationEphemeral5mInputTokens = "_eino_claude_cache_creation_ephemeral_5m_input_tokens"
+	keyOfCacheCreationEphemeral1hInputTokens = "_eino_claude_cache_creation_ephemeral_1h_input_tokens"
+	keyOfServerToolUseWebSearchRequests      = "_eino_claude_server_tool_use_web_search_requests"
+	keyOfServerToolUseWebFetchRequests       = "_eino_claude_server_tool_use_web_fetch_requests"
+)
+
+const keyOfContainer = "_eino_claude_container"

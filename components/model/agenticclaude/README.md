@@ -583,4 +583,17 @@ func main() {
 }
 ```
 
+#### Code Execution Container
+
+Responses that use code execution (directly, via web search/fetch dynamic filtering, or programmatic tool calling) report the container they ran in. Read it with `GetContainer`. To continue a turn that stopped with `pause_turn` inside code execution, or a programmatic tool call waiting for its result, send the container ID back with `WithContainer`; the API rejects the continuation without it.
+
+```go
+input = append(input, resp)
+var opts []model.Option
+if c, ok := agenticclaude.GetContainer(resp); ok {
+	opts = append(opts, agenticclaude.WithContainer(c.ID))
+}
+resp, err = am.Generate(ctx, input, opts...)
+```
+
 For more examples, please refer to the `examples` directory.

@@ -485,6 +485,10 @@ func (m *Model) genParamsAndOptions(input []*schema.AgenticMessage, options *mod
 		msgParams.CacheControl = *m.cacheControl
 	}
 
+	if specOptions.container != "" {
+		msgParams.Container = param.NewOpt(specOptions.container)
+	}
+
 	reqOpts = appendCustomHeaders(reqOpts, specOptions.serverTools, specOptions.customHeaders)
 	for k, v := range specOptions.extraFields {
 		reqOpts = append(reqOpts, option.WithJSONSet(k, v))

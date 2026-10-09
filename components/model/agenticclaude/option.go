@@ -27,6 +27,7 @@ type claudeOptions struct {
 	customHeaders  map[string]string
 	extraFields    map[string]any
 	requestTimeout time.Duration
+	container      string
 }
 
 // WithServerTools specifies server-side tools available to the model.
@@ -72,5 +73,15 @@ func WithExtraFields(fields map[string]any) model.Option {
 func WithRequestTimeout(d time.Duration) model.Option {
 	return model.WrapImplSpecificOptFn(func(o *claudeOptions) {
 		o.requestTimeout = d
+	})
+}
+
+// WithContainer sets the request's top-level container to reuse a code execution
+// container. It is required to continue a turn that paused (stop_reason
+// "pause_turn") inside code execution or a programmatic tool call; pass the ID
+// from GetContainer on the previous response.
+func WithContainer(id string) model.Option {
+	return model.WrapImplSpecificOptFn(func(o *claudeOptions) {
+		o.container = id
 	})
 }

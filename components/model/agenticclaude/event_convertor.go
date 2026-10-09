@@ -45,12 +45,10 @@ func (c *streamConverter) toMessageStreamingChunk(event anthropic.MessageStreamE
 		msg := &schema.AgenticMessage{
 			Role:         schema.AgenticRoleTypeAssistant,
 			ResponseMeta: toDeltaResponseMeta(e),
+			// message_delta carries no TTL split; it arrives on message_start.
+			Extra: toUsageExtra(e.Usage.CacheCreationInputTokens, anthropic.CacheCreation{}, e.Usage.ServerToolUse),
 		}
-		if e.Usage.CacheCreationInputTokens > 0 {
-			msg.Extra = map[string]any{
-				keyOfCacheCreationInputTokens: int(e.Usage.CacheCreationInputTokens),
-			}
-		}
+		setContainer(msg, e.Delta.Container)
 		return msg, nil
 	case anthropic.ContentBlockStartEvent:
 		contentBlock, err := c.toStreamingStartBlock(e.Index, e.ContentBlock.AsAny())

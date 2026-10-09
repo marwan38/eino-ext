@@ -580,4 +580,17 @@ func main() {
 }
 ```
 
+#### 代码执行容器
+
+使用了代码执行（直接调用、通过 web search/fetch 动态过滤或程序化工具调用）的响应会返回其所在的容器，可通过 `GetContainer` 读取。若一轮对话在代码执行中以 `pause_turn` 停止，或程序化工具调用正在等待结果，继续请求时需通过 `WithContainer` 回传容器 ID，否则 API 会拒绝该请求。
+
+```go
+input = append(input, resp)
+var opts []model.Option
+if c, ok := agenticclaude.GetContainer(resp); ok {
+	opts = append(opts, agenticclaude.WithContainer(c.ID))
+}
+resp, err = am.Generate(ctx, input, opts...)
+```
+
 更多示例请参考 `examples` 目录。

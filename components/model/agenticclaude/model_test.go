@@ -18,6 +18,8 @@ package agenticclaude
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -934,4 +936,43 @@ func TestManualCacheControlInConvertors(t *testing.T) {
 			t.Fatalf("block should not have cache_control, got type=%q", param.Content[0].OfText.CacheControl.Type)
 		}
 	})
+}
+
+func TestWithContainer_SendsContainer(t *testing.T) {
+	clearAnthropicAuthEnv(t)
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body = nil
+		_ = json.Unmarshal(raw, &body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+
+	m, err := New(context.Background(), &Config{
+		BaseURL:   srv.URL,
+		APIKey:    "api-key",
+		Model:     "claude-sonnet-4",
+		MaxTokens: 1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []*schema.AgenticMessage{schema.UserAgenticMessage("hello")}
+
+	if _, err = m.Generate(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := body["container"]; ok {
+		t.Fatalf("expected no container without option, got %v", body["container"])
+	}
+
+	if _, err = m.Generate(context.Background(), input, WithContainer("container_1")); err != nil {
+		t.Fatal(err)
+	}
+	if body["container"] != "container_1" {
+		t.Fatalf("container = %v, want container_1", body["container"])
+	}
 }

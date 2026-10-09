@@ -605,12 +605,29 @@ func toAgenticMessage(resp *anthropic.Message) (*schema.AgenticMessage, error) {
 		ContentBlocks: blocks,
 		ResponseMeta:  toAgenticResponseMeta(resp),
 	}
-	if resp.Usage.CacheCreationInputTokens > 0 {
-		msg.Extra = map[string]any{
-			keyOfCacheCreationInputTokens: int(resp.Usage.CacheCreationInputTokens),
-		}
-	}
+	msg.Extra = toUsageExtra(resp.Usage.CacheCreationInputTokens, resp.Usage.CacheCreation, resp.Usage.ServerToolUse)
+	setContainer(msg, resp.Container)
 	return msg, nil
+}
+
+// toUsageExtra stores each value as a separate int so stream concatenation keeps the last reported value.
+func toUsageExtra(cacheCreationInputTokens int64, cacheCreation anthropic.CacheCreation, serverToolUse anthropic.ServerToolUsage) map[string]any {
+	extra := map[string]any{}
+	setPositiveInt(extra, keyOfCacheCreationInputTokens, cacheCreationInputTokens)
+	setPositiveInt(extra, keyOfCacheCreationEphemeral5mInputTokens, cacheCreation.Ephemeral5mInputTokens)
+	setPositiveInt(extra, keyOfCacheCreationEphemeral1hInputTokens, cacheCreation.Ephemeral1hInputTokens)
+	setPositiveInt(extra, keyOfServerToolUseWebSearchRequests, serverToolUse.WebSearchRequests)
+	setPositiveInt(extra, keyOfServerToolUseWebFetchRequests, serverToolUse.WebFetchRequests)
+	if len(extra) == 0 {
+		return nil
+	}
+	return extra
+}
+
+func setPositiveInt(m map[string]any, key string, v int64) {
+	if v > 0 {
+		m[key] = int(v)
+	}
 }
 
 func toAgenticContentBlock(block any) (*schema.ContentBlock, error) {
