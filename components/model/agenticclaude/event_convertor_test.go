@@ -158,6 +158,9 @@ func TestStreamingServerToolCallStartBlock(t *testing.T) {
 	if c.serverToolNames[3] != ServerToolNameWebFetch {
 		t.Fatalf("serverToolNames[3] = %q", c.serverToolNames[3])
 	}
+	if block.ServerToolCall.CallID != "call_1" || block.ServerToolCall.Arguments != nil {
+		t.Fatalf("server tool call = %#v", block.ServerToolCall)
+	}
 }
 
 func TestToStreamingDeltaBlock(t *testing.T) {
@@ -166,14 +169,22 @@ func TestToStreamingDeltaBlock(t *testing.T) {
 		c.blockKinds[1] = schema.ContentBlockTypeServerToolCall
 		c.serverToolNames[1] = ServerToolNameToolSearchToolBm25
 
-		block, err := c.toStreamingDeltaBlock(1, anthropic.InputJSONDelta{
-			PartialJSON: `{"query":"find tools"}`,
-		})
-		if err != nil {
-			t.Fatalf("toStreamingDeltaBlock() error = %v", err)
+		for _, partialJSON := range []string{`{"query":`, `"find tools"}`} {
+			block, err := c.toStreamingDeltaBlock(1, anthropic.InputJSONDelta{PartialJSON: partialJSON})
+			if err != nil {
+				t.Fatalf("toStreamingDeltaBlock() error = %v", err)
+			}
+			if block != nil {
+				t.Fatalf("toStreamingDeltaBlock() = %#v", block)
+			}
 		}
-		if block == nil || block.ServerToolCall == nil {
-			t.Fatalf("toStreamingDeltaBlock() = %#v", block)
+
+		block, err := c.toStreamingStopBlock(1)
+		if err != nil {
+			t.Fatalf("toStreamingStopBlock() error = %v", err)
+		}
+		if block == nil || block.ServerToolCall == nil || block.StreamingMeta == nil || block.StreamingMeta.Index != 1 {
+			t.Fatalf("toStreamingStopBlock() = %#v", block)
 		}
 		args, ok := block.ServerToolCall.Arguments.(*ServerToolCallArguments)
 		if !ok {
@@ -206,11 +217,15 @@ func TestToStreamingDeltaBlock(t *testing.T) {
 		c := newStreamConverter()
 		c.blockKinds[4] = schema.ContentBlockTypeServerToolCall
 
-		_, err := c.toStreamingDeltaBlock(4, anthropic.InputJSONDelta{
+		if _, err := c.toStreamingDeltaBlock(4, anthropic.InputJSONDelta{
 			PartialJSON: `{"query":"value"}`,
-		})
-		if err == nil || !strings.Contains(err.Error(), `invalid server tool name ""`) {
+		}); err != nil {
 			t.Fatalf("toStreamingDeltaBlock() error = %v", err)
+		}
+
+		_, err := c.toStreamingStopBlock(4)
+		if err == nil || !strings.Contains(err.Error(), `invalid server tool name ""`) {
+			t.Fatalf("toStreamingStopBlock() error = %v", err)
 		}
 	})
 }
@@ -427,4 +442,47 @@ func TestStreamingCitationsDelta(t *testing.T) {
 	if chunk.ContentBlocks[0].AssistantGenText == nil || chunk.ContentBlocks[0].AssistantGenText.ClaudeExtension == nil {
 		t.Fatalf("content block = %#v", chunk.ContentBlocks[0])
 	}
+}
+
+func TestStreamingStartBlocksKeepCaller(t *testing.T) {
+	const caller = `"caller":{"tool_id":"srvtoolu_ce","type":"code_execution_20260120"}`
+
+	t.Run("server tool use", func(t *testing.T) {
+		var block anthropic.ServerToolUseBlock
+		if err := json.Unmarshal([]byte(`{"type":"server_tool_use","id":"srvtoolu_ws","name":"web_search","input":{},`+caller+`}`), &block); err != nil {
+			t.Fatalf("unmarshal error = %v", err)
+		}
+
+		cb, err := newStreamConverter().toStreamingServerToolCallStartBlock(0, block)
+		if err != nil {
+			t.Fatalf("error = %v", err)
+		}
+		cb.ServerToolCall.Arguments = &ServerToolCallArguments{WebSearch: &WebSearchArguments{Query: "nginx"}}
+		blockParam, err := serverToolCallToBlockParam(cb)
+		if err != nil {
+			t.Fatalf("serverToolCallToBlockParam() error = %v", err)
+		}
+		if got := mustJSON(t, blockParam); !strings.Contains(got, caller) {
+			t.Fatalf("json = %s, want substring %s", got, caller)
+		}
+	})
+
+	t.Run("web search result", func(t *testing.T) {
+		var block anthropic.WebSearchToolResultBlock
+		if err := json.Unmarshal([]byte(`{"type":"web_search_tool_result","tool_use_id":"srvtoolu_ws",`+caller+`,"content":[]}`), &block); err != nil {
+			t.Fatalf("unmarshal error = %v", err)
+		}
+
+		cb, err := newStreamConverter().toStreamingWebSearchToolResultStartBlock(0, block)
+		if err != nil {
+			t.Fatalf("error = %v", err)
+		}
+		blockParam, err := serverToolResultToBlockParam(cb)
+		if err != nil {
+			t.Fatalf("serverToolResultToBlockParam() error = %v", err)
+		}
+		if got := mustJSON(t, blockParam); !strings.Contains(got, caller) {
+			t.Fatalf("json = %s, want substring %s", got, caller)
+		}
+	})
 }

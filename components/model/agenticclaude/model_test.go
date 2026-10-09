@@ -17,10 +17,18 @@
 package agenticclaude
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -934,4 +942,246 @@ func TestManualCacheControlInConvertors(t *testing.T) {
 			t.Fatalf("block should not have cache_control, got type=%q", param.Content[0].OfText.CacheControl.Type)
 		}
 	})
+}
+
+func TestStreamServerToolCall(t *testing.T) {
+	cases := []struct {
+		name      ServerToolName
+		fragments []string
+		want      *ServerToolCallArguments
+	}{
+		{
+			name:      ServerToolNameWebSearch,
+			fragments: []string{`{"query":"golang"}`},
+			want:      &ServerToolCallArguments{WebSearch: &WebSearchArguments{Query: "golang"}},
+		},
+		{
+			name:      ServerToolNameWebSearch,
+			fragments: []string{"", `{"query`, `":"gola`, `ng"}`},
+			want:      &ServerToolCallArguments{WebSearch: &WebSearchArguments{Query: "golang"}},
+		},
+		{
+			name:      ServerToolNameWebFetch,
+			fragments: []string{`{"url":"https://exa`, `mple.com"}`},
+			want:      &ServerToolCallArguments{WebFetch: &WebFetchArguments{URL: "https://example.com"}},
+		},
+		{
+			name:      ServerToolNameCodeExecution,
+			fragments: []string{`{"code":"print(`, `1)"}`},
+			want:      &ServerToolCallArguments{CodeExecution: &CodeExecutionArguments{Code: "print(1)"}},
+		},
+		{
+			name:      ServerToolNameBashCodeExecution,
+			fragments: []string{`{"command":`, `"ls -la"}`},
+			want:      &ServerToolCallArguments{BashCodeExecution: &BashCodeExecutionArguments{Command: "ls -la"}},
+		},
+		{
+			name:      ServerToolNameTextEditorCodeExecution,
+			fragments: []string{`{"command":"view",`, `"path":"/tmp/a.txt"}`},
+			want: &ServerToolCallArguments{TextEditorCodeExecution: &TextEditorCodeExecutionArguments{
+				Command: "view",
+				Path:    "/tmp/a.txt",
+			}},
+		},
+		{
+			name:      ServerToolNameToolSearchToolBm25,
+			fragments: []string{`{"query":"find `, `tools"}`},
+			want:      &ServerToolCallArguments{ToolSearchToolBm25: &ToolSearchToolBm25Arguments{Query: "find tools"}},
+		},
+		{
+			name:      ServerToolNameToolSearchToolRegex,
+			fragments: []string{`{"query":"find`, `.*"}`},
+			want:      &ServerToolCallArguments{ToolSearchToolRegex: &ToolSearchToolRegexArguments{Query: "find.*"}},
+		},
+		{
+			name:      ServerToolNameWebSearch,
+			fragments: nil,
+			want:      &ServerToolCallArguments{WebSearch: &WebSearchArguments{}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("%s/%d fragments", tc.name, len(tc.fragments)), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, serverToolCallSSE(t, tc.name, tc.fragments))
+			}))
+			defer srv.Close()
+
+			m, err := New(context.Background(), &Config{
+				BaseURL:   srv.URL,
+				APIKey:    "test-key",
+				Model:     "claude-sonnet-4",
+				MaxTokens: 1024,
+			})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+
+			sr, err := m.Stream(context.Background(), []*schema.AgenticMessage{schema.UserAgenticMessage("hello")})
+			if err != nil {
+				t.Fatalf("Stream() error = %v", err)
+			}
+			defer sr.Close()
+
+			var chunks []*schema.AgenticMessage
+			for {
+				chunk, err := sr.Recv()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("Recv() error = %v", err)
+				}
+				chunks = append(chunks, chunk)
+			}
+
+			msg, err := schema.ConcatAgenticMessages(chunks)
+			if err != nil {
+				t.Fatalf("ConcatAgenticMessages() error = %v", err)
+			}
+			if len(msg.ContentBlocks) != 1 || msg.ContentBlocks[0].ServerToolCall == nil {
+				t.Fatalf("content blocks = %#v", msg.ContentBlocks)
+			}
+			call := msg.ContentBlocks[0].ServerToolCall
+			if call.CallID != "srvtoolu_1" || call.Name != string(tc.name) {
+				t.Fatalf("server tool call = %#v", call)
+			}
+			if !reflect.DeepEqual(call.Arguments, tc.want) {
+				t.Fatalf("arguments = %#v, want %#v", call.Arguments, tc.want)
+			}
+		})
+	}
+}
+
+func serverToolCallSSE(t *testing.T, name ServerToolName, fragments []string) string {
+	t.Helper()
+
+	var sb strings.Builder
+	writeEvent := func(typ string, data any) {
+		raw, err := json.Marshal(data)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+		fmt.Fprintf(&sb, "event: %s\ndata: %s\n\n", typ, raw)
+	}
+
+	writeEvent("message_start", map[string]any{
+		"type": "message_start",
+		"message": map[string]any{
+			"id": "msg_1", "type": "message", "role": "assistant", "model": "claude-sonnet-4",
+			"content": []any{}, "usage": map[string]any{"input_tokens": 1, "output_tokens": 1},
+		},
+	})
+	writeEvent("content_block_start", map[string]any{
+		"type":          "content_block_start",
+		"index":         0,
+		"content_block": map[string]any{"type": "server_tool_use", "id": "srvtoolu_1", "name": string(name), "input": map[string]any{}},
+	})
+	for _, f := range fragments {
+		writeEvent("content_block_delta", map[string]any{
+			"type":  "content_block_delta",
+			"index": 0,
+			"delta": map[string]any{"type": "input_json_delta", "partial_json": f},
+		})
+	}
+	writeEvent("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0})
+	writeEvent("message_delta", map[string]any{
+		"type":  "message_delta",
+		"delta": map[string]any{"stop_reason": "tool_use"},
+		"usage": map[string]any{"output_tokens": 5},
+	})
+	writeEvent("message_stop", map[string]any{"type": "message_stop"})
+	return sb.String()
+}
+
+func TestGenerateReplaysServerToolBlocksUnchanged(t *testing.T) {
+	const responseContent = `[
+		{"type":"server_tool_use","id":"srvtoolu_ce","name":"code_execution","input":{"code":"search()"},"caller":{"type":"direct"}},
+		{"type":"server_tool_use","id":"srvtoolu_ws","name":"web_search","input":{"query":"nginx"},"caller":{"type":"code_execution_20260120","tool_id":"srvtoolu_ce"}},
+		{"type":"web_search_tool_result","tool_use_id":"srvtoolu_ws","caller":{"type":"code_execution_20260120","tool_id":"srvtoolu_ce"},"content":[
+			{"type":"web_search_result","title":"nginx","url":"https://nginx.org","encrypted_content":"enc_1","page_age":null},
+			{"type":"web_search_result","title":"docs","url":"https://nginx.org/docs","encrypted_content":"enc_2","page_age":"1 day"}
+		]},
+		{"type":"server_tool_use","id":"srvtoolu_wf","name":"web_fetch","input":{"url":"https://nginx.org"},"caller":{"type":"code_execution_20260120","tool_id":"srvtoolu_ce"}},
+		{"type":"text","text":"done"}
+	]`
+
+	var bodies [][]byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("io.ReadAll() error = %v", err)
+		}
+		bodies = append(bodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude-sonnet-4","content":` + responseContent + `,"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+
+	m, err := New(context.Background(), &Config{
+		BaseURL:   srv.URL,
+		APIKey:    "test-key",
+		Model:     "claude-sonnet-4",
+		MaxTokens: 1024,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	first, err := m.Generate(context.Background(), []*schema.AgenticMessage{schema.UserAgenticMessage("search")})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(first); err != nil {
+		t.Fatalf("gob encode error = %v", err)
+	}
+	decoded := &schema.AgenticMessage{}
+	if err := gob.NewDecoder(&buf).Decode(decoded); err != nil {
+		t.Fatalf("gob decode error = %v", err)
+	}
+
+	for name, history := range map[string]*schema.AgenticMessage{"in memory": first, "gob": decoded} {
+		t.Run(name, func(t *testing.T) {
+			bodies = nil
+			_, err := m.Generate(context.Background(), []*schema.AgenticMessage{
+				schema.UserAgenticMessage("search"),
+				history,
+				schema.UserAgenticMessage("again"),
+			})
+			if err != nil {
+				t.Fatalf("Generate() error = %v", err)
+			}
+
+			var req struct {
+				Messages []struct {
+					Content []any `json:"content"`
+				} `json:"messages"`
+			}
+			if err := json.Unmarshal(bodies[0], &req); err != nil {
+				t.Fatalf("json.Unmarshal(request) error = %v", err)
+			}
+			var want []any
+			if err := json.Unmarshal([]byte(responseContent), &want); err != nil {
+				t.Fatalf("json.Unmarshal(response content) error = %v", err)
+			}
+			for _, block := range want {
+				b := block.(map[string]any)
+				if b["type"] != "web_search_tool_result" {
+					continue
+				}
+				for _, item := range b["content"].([]any) {
+					result := item.(map[string]any)
+					if result["page_age"] == nil {
+						delete(result, "page_age")
+					}
+				}
+			}
+			if got := req.Messages[1].Content; !reflect.DeepEqual(got, want) {
+				t.Fatalf("assistant turn = %s, want %s", mustJSON(t, got), mustJSON(t, want))
+			}
+		})
+	}
 }

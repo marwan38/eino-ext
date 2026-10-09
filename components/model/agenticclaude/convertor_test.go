@@ -1156,10 +1156,10 @@ func TestToAnthropicTextCitationsAdditional(t *testing.T) {
 
 func TestServerToolCallToBlockParam(t *testing.T) {
 	t.Run("web search", func(t *testing.T) {
-		blockParam, err := serverToolCallToBlockParam(&schema.ServerToolCall{
+		blockParam, err := serverToolCallToBlockParam(schema.NewContentBlock(&schema.ServerToolCall{
 			CallID: "call_1", Name: string(ServerToolNameWebSearch),
 			Arguments: &ServerToolCallArguments{WebSearch: &WebSearchArguments{Query: "golang"}},
-		})
+		}))
 		if err != nil {
 			t.Fatalf("error = %v", err)
 		}
@@ -1169,10 +1169,10 @@ func TestServerToolCallToBlockParam(t *testing.T) {
 	})
 
 	t.Run("code execution", func(t *testing.T) {
-		blockParam, err := serverToolCallToBlockParam(&schema.ServerToolCall{
+		blockParam, err := serverToolCallToBlockParam(schema.NewContentBlock(&schema.ServerToolCall{
 			CallID: "call_2", Name: string(ServerToolNameCodeExecution),
 			Arguments: &ServerToolCallArguments{CodeExecution: &CodeExecutionArguments{Code: "print(1)"}},
-		})
+		}))
 		if err != nil {
 			t.Fatalf("error = %v", err)
 		}
@@ -1182,10 +1182,10 @@ func TestServerToolCallToBlockParam(t *testing.T) {
 	})
 
 	t.Run("bash code execution", func(t *testing.T) {
-		blockParam, err := serverToolCallToBlockParam(&schema.ServerToolCall{
+		blockParam, err := serverToolCallToBlockParam(schema.NewContentBlock(&schema.ServerToolCall{
 			CallID: "call_3", Name: string(ServerToolNameBashCodeExecution),
 			Arguments: &ServerToolCallArguments{BashCodeExecution: &BashCodeExecutionArguments{Command: "ls"}},
-		})
+		}))
 		if err != nil {
 			t.Fatalf("error = %v", err)
 		}
@@ -1195,10 +1195,10 @@ func TestServerToolCallToBlockParam(t *testing.T) {
 	})
 
 	t.Run("text editor", func(t *testing.T) {
-		blockParam, err := serverToolCallToBlockParam(&schema.ServerToolCall{
+		blockParam, err := serverToolCallToBlockParam(schema.NewContentBlock(&schema.ServerToolCall{
 			CallID: "call_4", Name: string(ServerToolNameTextEditorCodeExecution),
 			Arguments: &ServerToolCallArguments{TextEditorCodeExecution: &TextEditorCodeExecutionArguments{Command: "view", Path: "/tmp/a.txt"}},
-		})
+		}))
 		if err != nil {
 			t.Fatalf("error = %v", err)
 		}
@@ -1208,10 +1208,10 @@ func TestServerToolCallToBlockParam(t *testing.T) {
 	})
 
 	t.Run("nil arguments", func(t *testing.T) {
-		_, err := serverToolCallToBlockParam(&schema.ServerToolCall{
+		_, err := serverToolCallToBlockParam(schema.NewContentBlock(&schema.ServerToolCall{
 			CallID: "call_5", Name: string(ServerToolNameWebSearch),
 			Arguments: &ServerToolCallArguments{},
-		})
+		}))
 		if err == nil || !strings.Contains(err.Error(), "nil") {
 			t.Fatalf("error = %v", err)
 		}

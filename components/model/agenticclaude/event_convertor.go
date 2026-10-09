@@ -18,6 +18,7 @@ package agenticclaude
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/bytedance/sonic"
@@ -26,14 +27,16 @@ import (
 )
 
 type streamConverter struct {
-	blockKinds      map[int64]schema.ContentBlockType
-	serverToolNames map[int64]ServerToolName
+	blockKinds       map[int64]schema.ContentBlockType
+	serverToolNames  map[int64]ServerToolName
+	serverToolInputs map[int64]*strings.Builder
 }
 
 func newStreamConverter() *streamConverter {
 	return &streamConverter{
-		blockKinds:      make(map[int64]schema.ContentBlockType),
-		serverToolNames: make(map[int64]ServerToolName),
+		blockKinds:       make(map[int64]schema.ContentBlockType),
+		serverToolNames:  make(map[int64]ServerToolName),
+		serverToolInputs: make(map[int64]*strings.Builder),
 	}
 }
 
@@ -60,6 +63,12 @@ func (c *streamConverter) toMessageStreamingChunk(event anthropic.MessageStreamE
 		return newAssistantStreamingChunk(contentBlock), nil
 	case anthropic.ContentBlockDeltaEvent:
 		contentBlock, err := c.toStreamingDeltaBlock(e.Index, e.Delta.AsAny())
+		if err != nil {
+			return nil, err
+		}
+		return newAssistantStreamingChunk(contentBlock), nil
+	case anthropic.ContentBlockStopEvent:
+		contentBlock, err := c.toStreamingStopBlock(e.Index)
 		if err != nil {
 			return nil, err
 		}
@@ -130,13 +139,35 @@ func (c *streamConverter) toStreamingDeltaBlock(index int64, delta any) (content
 
 	case anthropic.InputJSONDelta:
 		if c.blockKinds[index] == schema.ContentBlockTypeServerToolCall {
-			return c.toStreamingServerToolCallDeltaBlock(index, item.PartialJSON, meta)
+			if c.serverToolInputs[index] == nil {
+				c.serverToolInputs[index] = &strings.Builder{}
+			}
+			c.serverToolInputs[index].WriteString(item.PartialJSON)
+			return nil, nil
 		}
 		return schema.NewContentBlockChunk(&schema.FunctionToolCall{Arguments: item.PartialJSON}, meta), nil
 
 	default:
 		return nil, fmt.Errorf("invalid stream delta type %T", delta)
 	}
+}
+
+// Server tool arguments are typed and cannot be concatenated from partial JSON,
+// so the input is buffered and decoded once the block is complete.
+func (c *streamConverter) toStreamingStopBlock(index int64) (contentBlock *schema.ContentBlock, err error) {
+	if c.blockKinds[index] != schema.ContentBlockTypeServerToolCall {
+		return nil, nil
+	}
+
+	var inputJSON string
+	if input := c.serverToolInputs[index]; input != nil {
+		inputJSON = input.String()
+		delete(c.serverToolInputs, index)
+	}
+	if inputJSON == "" {
+		inputJSON = "{}"
+	}
+	return c.toStreamingServerToolCallDeltaBlock(index, inputJSON, &schema.StreamingMeta{Index: int(index)})
 }
 
 func (c *streamConverter) toStreamingServerToolCallDeltaBlock(index int64, partialJSON string, meta *schema.StreamingMeta) (contentBlock *schema.ContentBlock, err error) {
@@ -260,7 +291,9 @@ func (c *streamConverter) toStreamingServerToolCallStartBlock(index int64, block
 	c.blockKinds[index] = schema.ContentBlockTypeServerToolCall
 	c.serverToolNames[index] = ServerToolName(block.Name)
 
-	return schema.NewContentBlockChunk(contentBlock.ServerToolCall, &schema.StreamingMeta{Index: int(index)}), nil
+	contentBlock.ServerToolCall.Arguments = nil
+	contentBlock.StreamingMeta = &schema.StreamingMeta{Index: int(index)}
+	return contentBlock, nil
 }
 
 func (c *streamConverter) toStreamingTextStartBlock(index int64, block anthropic.TextBlock) *schema.ContentBlock {
@@ -293,7 +326,8 @@ func (c *streamConverter) toStreamingWebSearchToolResultStartBlock(index int64, 
 	if err != nil {
 		return nil, err
 	}
-	return schema.NewContentBlockChunk(contentBlock.ServerToolResult, &schema.StreamingMeta{Index: int(index)}), nil
+	contentBlock.StreamingMeta = &schema.StreamingMeta{Index: int(index)}
+	return contentBlock, nil
 }
 
 func (c *streamConverter) toStreamingWebFetchToolResultStartBlock(index int64, block anthropic.WebFetchToolResultBlock) (contentBlock *schema.ContentBlock, err error) {
@@ -302,7 +336,8 @@ func (c *streamConverter) toStreamingWebFetchToolResultStartBlock(index int64, b
 	if err != nil {
 		return nil, err
 	}
-	return schema.NewContentBlockChunk(contentBlock.ServerToolResult, &schema.StreamingMeta{Index: int(index)}), nil
+	contentBlock.StreamingMeta = &schema.StreamingMeta{Index: int(index)}
+	return contentBlock, nil
 }
 
 func (c *streamConverter) toStreamingCodeExecutionToolResultStartBlock(index int64, block anthropic.CodeExecutionToolResultBlock) (contentBlock *schema.ContentBlock, err error) {
@@ -311,7 +346,8 @@ func (c *streamConverter) toStreamingCodeExecutionToolResultStartBlock(index int
 	if err != nil {
 		return nil, err
 	}
-	return schema.NewContentBlockChunk(contentBlock.ServerToolResult, &schema.StreamingMeta{Index: int(index)}), nil
+	contentBlock.StreamingMeta = &schema.StreamingMeta{Index: int(index)}
+	return contentBlock, nil
 }
 
 func (c *streamConverter) toStreamingBashCodeExecutionToolResultStartBlock(index int64, block anthropic.BashCodeExecutionToolResultBlock) (contentBlock *schema.ContentBlock, err error) {
@@ -320,7 +356,8 @@ func (c *streamConverter) toStreamingBashCodeExecutionToolResultStartBlock(index
 	if err != nil {
 		return nil, err
 	}
-	return schema.NewContentBlockChunk(contentBlock.ServerToolResult, &schema.StreamingMeta{Index: int(index)}), nil
+	contentBlock.StreamingMeta = &schema.StreamingMeta{Index: int(index)}
+	return contentBlock, nil
 }
 
 func (c *streamConverter) toStreamingTextEditorCodeExecutionToolResultStartBlock(index int64, block anthropic.TextEditorCodeExecutionToolResultBlock) (contentBlock *schema.ContentBlock, err error) {
@@ -329,5 +366,6 @@ func (c *streamConverter) toStreamingTextEditorCodeExecutionToolResultStartBlock
 	if err != nil {
 		return nil, err
 	}
-	return schema.NewContentBlockChunk(contentBlock.ServerToolResult, &schema.StreamingMeta{Index: int(index)}), nil
+	contentBlock.StreamingMeta = &schema.StreamingMeta{Index: int(index)}
+	return contentBlock, nil
 }

@@ -23,10 +23,23 @@ import (
 )
 
 const (
+	keyOfServerToolUseCaller       = "_agenticclaude_server_tool_use_caller"
 	keyOfWebSearchToolResultCaller = "_agenticclaude_web_search_tool_result_caller"
 	keyOfWebFetchToolResultCaller  = "_agenticclaude_web_fetch_tool_result_caller"
 	keyOfCacheControlTTL           = "_agenticclaude_cache_control_ttl"
 )
+
+func setServerToolUseCaller(block *schema.ContentBlock, caller anthropic.ServerToolUseBlockCallerUnion) {
+	setContentBlockExtraValue(block, keyOfServerToolUseCaller, caller.RawJSON())
+}
+
+func toServerToolUseCallerParam(block *schema.ContentBlock) (param anthropic.ServerToolUseBlockParamCallerUnion, err error) {
+	caller, ok := getContentBlockExtraValue[string](block, keyOfServerToolUseCaller)
+	if !ok || caller == "" {
+		return param, nil
+	}
+	return param, sonic.UnmarshalString(caller, &param)
+}
 
 func setWebSearchResultCaller(block *schema.ContentBlock, caller anthropic.WebSearchToolResultBlockCallerUnion) {
 	setContentBlockExtraValue(block, keyOfWebSearchToolResultCaller, caller.RawJSON())

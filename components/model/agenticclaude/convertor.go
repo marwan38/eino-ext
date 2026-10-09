@@ -224,7 +224,7 @@ func toAssistantMessageParam(msg *schema.AgenticMessage) (msgParam anthropic.Mes
 		case schema.ContentBlockTypeFunctionToolCall:
 			blockParam, err = functionToolCallToBlockParam(block.FunctionToolCall)
 		case schema.ContentBlockTypeServerToolCall:
-			blockParam, err = serverToolCallToBlockParam(block.ServerToolCall)
+			blockParam, err = serverToolCallToBlockParam(block)
 		case schema.ContentBlockTypeServerToolResult:
 			blockParam, err = serverToolResultToBlockParam(block)
 		default:
@@ -294,30 +294,42 @@ func functionToolCallToBlockParam(call *schema.FunctionToolCall) (anthropic.Cont
 	return anthropic.NewToolUseBlock(call.CallID, input, call.Name), nil
 }
 
-func serverToolCallToBlockParam(call *schema.ServerToolCall) (anthropic.ContentBlockParamUnion, error) {
+func serverToolCallToBlockParam(block *schema.ContentBlock) (anthropic.ContentBlockParamUnion, error) {
+	call := block.ServerToolCall
 	args, err := getServerToolCallArguments(call)
 	if err != nil {
 		return anthropic.ContentBlockParamUnion{}, err
 	}
 
+	var input any
+	var name anthropic.ServerToolUseBlockParamName
 	switch {
 	case args.WebSearch != nil:
-		return anthropic.NewServerToolUseBlock(call.CallID, args.WebSearch, anthropic.ServerToolUseBlockParamNameWebSearch), nil
+		input, name = args.WebSearch, anthropic.ServerToolUseBlockParamNameWebSearch
 	case args.WebFetch != nil:
-		return anthropic.NewServerToolUseBlock(call.CallID, args.WebFetch, anthropic.ServerToolUseBlockParamNameWebFetch), nil
+		input, name = args.WebFetch, anthropic.ServerToolUseBlockParamNameWebFetch
 	case args.CodeExecution != nil:
-		return anthropic.NewServerToolUseBlock(call.CallID, args.CodeExecution, anthropic.ServerToolUseBlockParamNameCodeExecution), nil
+		input, name = args.CodeExecution, anthropic.ServerToolUseBlockParamNameCodeExecution
 	case args.BashCodeExecution != nil:
-		return anthropic.NewServerToolUseBlock(call.CallID, args.BashCodeExecution, anthropic.ServerToolUseBlockParamNameBashCodeExecution), nil
+		input, name = args.BashCodeExecution, anthropic.ServerToolUseBlockParamNameBashCodeExecution
 	case args.TextEditorCodeExecution != nil:
-		return anthropic.NewServerToolUseBlock(call.CallID, args.TextEditorCodeExecution, anthropic.ServerToolUseBlockParamNameTextEditorCodeExecution), nil
+		input, name = args.TextEditorCodeExecution, anthropic.ServerToolUseBlockParamNameTextEditorCodeExecution
 	case args.ToolSearchToolBm25 != nil:
-		return anthropic.NewServerToolUseBlock(call.CallID, args.ToolSearchToolBm25, anthropic.ServerToolUseBlockParamNameToolSearchToolBm25), nil
+		input, name = args.ToolSearchToolBm25, anthropic.ServerToolUseBlockParamNameToolSearchToolBm25
 	case args.ToolSearchToolRegex != nil:
-		return anthropic.NewServerToolUseBlock(call.CallID, args.ToolSearchToolRegex, anthropic.ServerToolUseBlockParamNameToolSearchToolRegex), nil
+		input, name = args.ToolSearchToolRegex, anthropic.ServerToolUseBlockParamNameToolSearchToolRegex
 	default:
 		return anthropic.ContentBlockParamUnion{}, fmt.Errorf("server tool call arguments are nil")
 	}
+
+	caller, err := toServerToolUseCallerParam(block)
+	if err != nil {
+		return anthropic.ContentBlockParamUnion{}, err
+	}
+
+	blockParam := anthropic.NewServerToolUseBlock(call.CallID, input, name)
+	blockParam.OfServerToolUse.Caller = caller
+	return blockParam, nil
 }
 
 func serverToolResultToBlockParam(block *schema.ContentBlock) (blockParam anthropic.ContentBlockParamUnion, err error) {
@@ -367,7 +379,10 @@ func webSearchToolResultToBlockParam(result *WebSearchResult, callID string, blo
 				Title:            item.Title,
 				URL:              item.URL,
 				EncryptedContent: item.EncryptedContent,
-				PageAge:          param.NewOpt(item.PageAge),
+			}
+			// page_age is nullable; resending null as "" alters the block, which the API rejects.
+			if item.PageAge != "" {
+				resultBlockParam.PageAge = param.NewOpt(item.PageAge)
 			}
 			resultBlockParams = append(resultBlockParams, resultBlockParam)
 		}
@@ -698,6 +713,15 @@ func toAgenticResponseMeta(resp *anthropic.Message) *schema.AgenticResponseMeta 
 }
 
 func serverToolUseToContentBlock(block anthropic.ServerToolUseBlock) (*schema.ContentBlock, error) {
+	contentBlock, err := serverToolUseArgumentsToContentBlock(block)
+	if err != nil {
+		return nil, err
+	}
+	setServerToolUseCaller(contentBlock, block.Caller)
+	return contentBlock, nil
+}
+
+func serverToolUseArgumentsToContentBlock(block anthropic.ServerToolUseBlock) (*schema.ContentBlock, error) {
 	switch ServerToolName(block.Name) {
 	case ServerToolNameWebSearch:
 		return webSearchToolUseToContentBlock(block)
